@@ -159,3 +159,45 @@ output "sections_to_rules_mapping" {
     }
   }
 }
+
+# Sub-Policy Outputs (same design as bulk-if-rules)
+output "sub_policy_ids" {
+  description = "Map of sub-policy names to their IDs"
+  value = {
+    for k, v in cato_wf_sub_policy.sub_policies : k => v.id
+  }
+}
+
+output "sub_policy_scope_rule_ids" {
+  description = "Map of sub-policy names to the ID of their underlying SUB_POLICY_SCOPE rule"
+  value = {
+    for k, v in cato_wf_sub_policy.sub_policies : k => v.scope_rule_id
+  }
+}
+
+output "sub_rule_ids" {
+  description = "Map of sub-rules (keyed \"<sub_policy_name>::<rule_name>\") to their IDs"
+  value = {
+    for k, v in cato_wf_rule.sub_rules : k => v.rule.id
+  }
+}
+
+output "unmanaged_sub_sections" {
+  description = "Sub-sections present in the JSON that this module cannot yet manage (no cato_wf_section sub-policy parenting in the provider). Informational only."
+  value       = local.sub_sections_data
+}
+
+output "unordered_sub_policy_rules" {
+  description = "rules_in_sections rows that order a rule inside a sub-policy, which cato_bulk_wf_move_rule does not yet support. Informational only."
+  value       = local.unordered_sub_policy_rules_data
+}
+
+output "cleanup_rule_ids" {
+  description = "Map of sub-policy name to the id of its cleanup rule (the sub-policy's last rule, API-managed identity)."
+  value       = { for name, sp in cato_wf_sub_policy.sub_policies : name => sp.cleanup_rule_id }
+}
+
+output "unordered_sub_policies" {
+  description = "rules_in_sections sub-policy rows whose parent section is not in sections[], so cato_bulk_wf_move_rule does not order them. Informational only."
+  value       = local.unordered_sub_policies_data
+}

@@ -268,6 +268,63 @@ If unintended changes are made directly to rules and sections in the Cato Manage
 ## Compare with your existing JSON file to identify changes
    
 
+## Sub-policies
+
+The WAN Firewall supports **sub-policies**: a nested policy, scoped by a
+`SUB_POLICY_SCOPE` rule, with its own rules and (optionally) its own
+sub-sections. This module supports creating and ordering sub-policies and
+their rules — the design is a 1:1 port of the Internet Firewall sub-policy
+support (full JSON contract: `ifw-sub-policy-json-design.md`, companion
+design doc in the `reference-architecture-cma-configs` repo). One difference
+from IFW: WAN Firewall has no API-default section, so the export performs no
+section exclusion or rule re-homing.
+
+### New JSON keys
+
+- `data.policy.wanFirewall.policy.sub_policies[]` - one entry per
+  sub-policy: `sub_policy_name`, `description`, `enabled` (informational —
+  the policy object's own flag, not settable via the public API),
+  `scope_enabled` (the scope rule's flag — the one terraform manages),
+  `scope` (the `SUB_POLICY_SCOPE` rule's matching criteria incl. `direction`),
+  `cleanup_rule` (the API auto-created cleanup rule, nested here instead of
+  in `rules[]` — `cato_wf_sub_policy` embeds and manages it), plus
+  `sub_policy_id`/`scope_rule_id` (brownfield import keys only).
+- `sections[]` entries may carry `sub_policy_name` to mark a sub-section owned
+  by that sub-policy (`section_index` restarts per parent).
+- `rules[]` entries may carry `sub_policy_name` to mark a rule owned by that
+  sub-policy. The rule's `section.name` is either the sub-section's name or
+  `""` when the sub-policy has no explicit sub-section.
+- `rules_in_sections[]` rows gain two optional fields: `entry_type`
+  (`"rule"` default, or `"sub_policy"` for the scope row positioned among its
+  sibling rules) and `sub_policy_name` (on a rule row, orders that rule
+  *inside* the named sub-policy).
+
+A legacy file (no `sub_policies` key, no `entry_type`/`sub_policy_name`
+anywhere) is a valid instance of this schema and produces **byte-identical**
+resource sets at today's addresses - no state migration for existing
+deployments.
+
+### Resources created
+
+- `cato_wf_sub_policy.sub_policies` - keyed by `sub_policy_name`. Positioned
+  `LAST_IN_SECTION` under the parent section derived from its
+  `entry_type: "sub_policy"` row; falls back to `LAST_IN_POLICY` when that
+  parent section isn't managed by this module. Embeds the cleanup rule
+  (customizable name/body; identified as the sub-policy's LAST rule).
+- `cato_wf_rule.sub_rules` - keyed `"<sub_policy_name>::<rule_name>"`, with
+  `sub_policy_id` set to the owning `cato_wf_sub_policy`.
+
+### Known provider gaps
+
+- **No sub-section resource.** `cato_wf_section` has no sub-policy parenting
+  yet, so sub-sections are **export/import-only** — surfaced via the
+  `unmanaged_sub_sections` output.
+- **No ordering inside a sub-policy.** `cato_bulk_wf_move_rule` cannot yet
+  reorder rules *inside* a sub-policy; such rows are excluded from the move
+  resource and surfaced via `unordered_sub_policy_rules` — order inside a
+  sub-policy is **creation-order best-effort only**. Sub-policies themselves
+  (as scope rows among sibling rules) ARE ordered correctly.
+
 ## Using Module Outputs
 
 The module provides comprehensive outputs that can be used for monitoring, auditing, integration with other systems, and operational insights. Below are practical examples of how to use these outputs in your Terraform configuration.

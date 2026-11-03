@@ -36,3 +36,15 @@
 ### Features
 - Updated import logic around customService with portrange, and subnet inpur params
 
+
+## 0.0.10 (unreleased)
+
+### Features
+- Sub-policy support (parity with bulk-if-rules): `cato_wf_sub_policy` with embedded
+  API-created cleanup rule, `cato_wf_rule.sub_rules` (keyed `<sub_policy_name>::<rule_name>`),
+  scope rows ordered via `cato_bulk_wf_move_rule`, shared `rule_bodies` local across
+  main/sub/cleanup rules. New outputs: `sub_policy_ids`, `sub_policy_scope_rule_ids`,
+  `sub_rule_ids`, `cleanup_rule_ids`, `unmanaged_sub_sections`, `unordered_sub_policies`,
+  `unordered_sub_policy_rules`. Legacy (flat) JSON exports are unaffected.
+- Requires provider >= 1.3.1 (cato_wf_sub_policy cleanup_rule embed + input-only `at`)
+  and `catocli export wf_rules` with sub-policy support.
