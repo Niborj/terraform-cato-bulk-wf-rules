@@ -433,6 +433,18 @@ locals {
   }
 }
 
+# Safety guard: for_each over an empty main_rules_data would otherwise plan to
+# silently destroy every live rule. A precondition on a rule resource would
+# never run with 0 for_each instances, so it lives on this standalone resource.
+resource "terraform_data" "guard_empty_policy" {
+  lifecycle {
+    precondition {
+      condition     = var.allow_empty_policy || length(local.main_rules_data) > 0
+      error_message = "Policy JSON contains 0 rules. If intentional (greenfield/teardown), set allow_empty_policy = true. A truncated or wrong-tenant export would otherwise destroy the entire live policy."
+    }
+  }
+}
+
 resource "cato_wf_section" "sections" {
   for_each = local.sections_data
   at = {

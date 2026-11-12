@@ -41,29 +41,6 @@ The JSON file should contain a nested structure with the following key component
 - `section_name`: The section this rule belongs to
 - `rule_name`: The name of the rule to place in the section
 
-### How Rule Ordering Works
-
-Based on the example:
-1. **Section 11** ("My WF Section 11") is created first
-2. **Section 22** ("My WF Section 22") is created second
-3. **Rule 11** is placed in Section 11 at position 1
-4. **Rule 33** is placed in Section 22 at position 1
-5. **Rule 22** is placed in Section 22 at position 2
-
-The final policy structure will be:
-```
-├── My WF Section 11
-│   └── My WF Rule 11
-└── My WF Section 22
-    ├── My WF Rule 33
-    └── My WF Rule 22
-```
-
-### Parameters
-
-- `wf_rules_json_file_path`: Path to your JSON configuration file
-- `section_to_start_after_id`: (Optional) ID of an existing section after which to insert the new sections
-
 <details>
 <summary>Click to expand full JSON configuration example</summary>
 
@@ -177,6 +154,29 @@ The final policy structure will be:
 ```
 </details>
 
+### How Rule Ordering Works
+
+Based on the example:
+1. **Section 11** ("My WF Section 11") is created first
+2. **Section 22** ("My WF Section 22") is created second
+3. **Rule 11** is placed in Section 11 at position 1
+4. **Rule 33** is placed in Section 22 at position 1
+5. **Rule 22** is placed in Section 22 at position 2
+
+The final policy structure will be:
+```
+├── My WF Section 11
+│   └── My WF Rule 11
+└── My WF Section 22
+    ├── My WF Rule 33
+    └── My WF Rule 22
+```
+
+### Parameters
+
+- `wf_rules_json_file_path`: Path to your JSON configuration file
+- `section_to_start_after_id`: (Optional) ID of an existing section after which to insert the new sections
+
 ## Working with Existing Rules (Brownfield Deployments)
 
 For brownfield deployments where you have existing WAN Firewall rules in your Cato Management Application, you can use the Cato CLI to export and import these rules into Terraform state.
@@ -204,15 +204,103 @@ catocli export wf_rules
 
 This command will generate a JSON file containing all your existing WF rules and sections in the correct format for this Terraform module.
 
-### Importing Rules into Terraform State
+### Importing Existing Rules into Terraform State (native import blocks)
 
-Once you have the JSON configuration file, you can import the existing rules and sections into Terraform state. This is useful for:
+Once you have the JSON configuration file, you can adopt the existing rules, sections, and sub-policies into Terraform state. This is useful for:
 
 - **Brownfield deployments**: Managing existing rules with Terraform
 - **Backup and restore**: Restoring rules to a known good state after unintended changes
 - **State management**: Bringing existing infrastructure under Terraform control
 
-To import the rules into Terraform state:
+There are two ways to do this. All of this module's `for_each` state addresses are keyed by name (rule name, section name, sub-policy name), which is exactly what lets both options below line up directly against the exported JSON.
+
+<details>
+<summary>Option A (recommended) — native Terraform import blocks (migration.tf)</summary>
+
+Requires Terraform >= 1.7. Create a one-shot `migration.tf` file beside your module call with one `import` block per resource type:
+
+<details>
+<summary>migration.tf — import blocks for WAN Firewall</summary>
+
+```hcl
+locals {
+  wf_policy = jsondecode(file("./config_data/all_wf_rules_and_sections_simple_working.json")).data.policy.wanFirewall.policy
+
+  wf_main_sections = {
+    for s in local.wf_policy.sections : s.section_name => s
+    if try(s.sub_policy_name, null) == null
+  }
+  wf_main_rules = {
+    for r in local.wf_policy.rules : r.rule.name => r.rule
+    if try(r.sub_policy_name, null) == null
+  }
+  wf_sub_policies = {
+    for sp in try(local.wf_policy.sub_policies, []) : sp.sub_policy_name => sp
+  }
+  wf_sub_rules = {
+    for r in local.wf_policy.rules : "${r.sub_policy_name}::${r.rule.name}" => r.rule
+    if try(r.sub_policy_name, null) != null
+  }
+}
+
+import {
+  for_each = local.wf_main_sections
+  to       = module.wf_rules.cato_wf_section.sections[each.key]
+  id       = each.value.section_id
+}
+
+import {
+  for_each = local.wf_main_rules
+  to       = module.wf_rules.cato_wf_rule.rules[each.key]
+  id       = each.value.id
+}
+
+import {
+  for_each = local.wf_sub_policies
+  to       = module.wf_rules.cato_wf_sub_policy.sub_policies[each.key]
+  id       = each.value.sub_policy_id
+}
+
+import {
+  for_each = local.wf_sub_rules
+  to       = module.wf_rules.cato_wf_rule.sub_rules[each.key]
+  id       = each.value.id
+}
+
+# cato_bulk_wf_move_rule.all_wf_rules is plan-time ordering orchestration —
+# it has no live object of its own, so it is never imported; it's created on
+# the first apply after the resources above are adopted.
+#
+# Sub-sections (sections[] entries with sub_policy_name set) have no
+# resource to import into: cato_wf_section has no sub-policy parenting yet
+# (see "Known provider gaps" below). They stay export/import-only, surfaced
+# via the unmanaged_sub_sections output.
+```
+
+</details>
+
+Preview the adoption before anything touches state:
+
+```bash
+terraform plan
+```
+
+Expect `N to import, 0 to add, 0 to change, 0 to destroy`. Any non-zero "to change" means the JSON export is stale relative to the live policy — **re-export** (`catocli export wf_rules`) and regenerate the locals above, rather than letting `terraform apply` overwrite the live policy with stale config.
+
+Once the plan is clean, adopt the resources into state:
+
+```bash
+terraform apply
+```
+
+Then delete `migration.tf` — its job is done, and leaving it in place just re-runs the same (no-op) import blocks on every future plan.
+
+</details>
+
+<details>
+<summary>Option B — catocli import wf_rules_to_tf (imperative alternative)</summary>
+
+An imperative alternative to Option A, for when native import blocks aren't practical (e.g. scripting a fully automated onboarding pipeline). Unlike Option A, this mutates Terraform state immediately — there is no plan preview before the import happens.
 
 ```bash
 catocli import wf_rules_to_tf config_data/all_wf_rules_and_sections_simple_working.json --module-name=module.wf_rules
@@ -221,6 +309,8 @@ catocli import wf_rules_to_tf config_data/all_wf_rules_and_sections_simple_worki
 **Parameters:**
 - `config_data/all_wf_rules_and_sections_simple_working.json`: Path to your exported JSON file
 - `--module-name=module.wf_rules`: The name of your Terraform module instance
+
+</details>
 
 ### Typical Brownfield Workflow
 
@@ -238,10 +328,12 @@ catocli import wf_rules_to_tf config_data/all_wf_rules_and_sections_simple_worki
    }
    ```
 
-3. **Import existing state:**
+3. **Adopt existing state (Option A — recommended):** create `migration.tf` with the import blocks shown above, then:
    ```bash
-   catocli import wf_rules_to_tf config_data/all_wf_rules_and_sections_simple_working.json --module-name=module.wf_rules
+   terraform plan    # preview: expect only "to import"
+   terraform apply   # adopt into state
    ```
+   Delete `migration.tf` afterwards. (Option B: `catocli import wf_rules_to_tf config_data/all_wf_rules_and_sections_simple_working.json --module-name=module.wf_rules` — imperative, no plan preview.)
 
 4. **Run Terraform plan to verify:**
    ```bash
@@ -260,13 +352,10 @@ If unintended changes are made directly to rules and sections in the Cato Manage
     This will restore rules and sections to match your Terraform configuration.
 
 2. **Alternatively, re-export and compare:**
-
-    ```bash
-    catocli export wf_rules
-    ```
-
-## Compare with your existing JSON file to identify changes
-   
+   ```bash
+   catocli export wf_rules
+   # Compare with your existing JSON file to identify changes
+   ```
 
 ## Sub-policies
 
@@ -597,6 +686,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_allow_empty_policy"></a> [allow\_empty\_policy](#input\_allow\_empty\_policy) | Safety guard: fail planning when the policy JSON contains 0 rules unless explicitly allowed. Protects against a truncated or wrong-tenant export destroying the live policy. Set true only for intentional greenfield/teardown. | `bool` | `false` | no |
 | <a name="input_section_to_start_after_id"></a> [section\_to\_start\_after\_id](#input\_section\_to\_start\_after\_id) | The ID of the section after which to start adding rules. | `string` | `null` | no |
 | <a name="input_wf_rules_json_file_path"></a> [wf\_rules\_json\_file\_path](#input\_wf\_rules\_json\_file\_path) | Path to the json file containing the ifw rule data. | `string` | n/a | yes |
 
