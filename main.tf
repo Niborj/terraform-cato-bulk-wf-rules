@@ -464,6 +464,10 @@ resource "cato_wf_rule" "rules" {
   }
 
   rule = local.rule_bodies[each.value.rule.name]
+
+  lifecycle {
+    ignore_changes = [at] # create-only positioning; ordering owned by the move resource
+  }
 }
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -578,6 +582,10 @@ resource "cato_wf_rule" "sub_rules" {
   }
 
   rule = local.rule_bodies[each.value.rule.name]
+
+  lifecycle {
+    ignore_changes = [at] # create-only positioning; ordering owned by the move resource
+  }
 }
 
 resource "cato_bulk_wf_move_rule" "all_wf_rules" {
